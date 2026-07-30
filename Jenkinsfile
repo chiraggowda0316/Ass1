@@ -44,7 +44,11 @@ pipeline {
             steps {
                 dir('ass1_java_dev') {
                     script {
-                        docker.withRegistry("https://${REGISTRY_URL}", REGISTRY_CREDENTIALS_ID) {
+                        // Securely bind Jenkins credentials to temporary shell environment variables
+                        withCredentials([usernamePassword(credentialsId: env.REGISTRY_CREDENTIALS_ID, 
+                                                         usernameVariable: 'DOCKER_USER', 
+                                                         passwordVariable: 'DOCKER_PASS')]) {
+                            
                             echo "Building using optimized BuildKit caching layers..."
                             sh """
                                 export DOCKER_BUILDKIT=1
@@ -53,9 +57,16 @@ pipeline {
                                   -t ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG} \
                                   -t ${REGISTRY_URL}/${IMAGE_NAME}:latest .
                             """
+                            
+                            echo "Authenticating explicitly against Docker Hub CLI..."
+                            sh "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
+                            
                             echo "Pushing traced images to Docker Hub..."
                             sh "docker push ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}"
                             sh "docker push ${REGISTRY_URL}/${IMAGE_NAME}:latest"
+                            
+                            echo "Cleaning up local runtime registry session tokens..."
+                            sh "docker logout"
                         }
                     }
                 }
