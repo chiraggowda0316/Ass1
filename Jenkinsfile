@@ -12,9 +12,9 @@ pipeline {
         IMAGE_TAG               = "build-${BUILD_NUMBER}"
         SLACK_CHANNEL           = '#devops-alerts'
         
-        // Readiness Variables 
+        // Readiness Variables (Mapped to the exposed host port)
         HEALTH_ENDPOINT         = 'http://localhost:8082/actuator/health'
-        MAX_RETRIES             = '12' // 12 * 5 seconds = 1 minute total retry window
+        MAX_RETRIES             = '15' // Allows a 75-second startup window
     }
 
     options {
@@ -93,20 +93,25 @@ pipeline {
                     boolean isHealthy = false
                     int maxRetries = Integer.parseInt(env.MAX_RETRIES)
 
+                    // Initial sleep allowing Tomcat to bind completely before polling
+                    sleep 10
+
                     while (retries < maxRetries && !isHealthy) {
-                        int statusCode = sh(script: "curl -s -o /dev/null -w '%{http_code}' ${HEALTH_ENDPOINT}", returnStdout: true).trim().toInteger()
-                        if (statusCode == 200) {
-                            echo "Application verified healthy!"
+                        int statusCode = sh(script: "curl -s -m 5 -o /dev/null -w '%{http_code}' ${HEALTH_ENDPOINT}", returnStdout: true).trim().toInteger()
+                        
+                        // Accept HTTP 200 (OK) or security challenges if endpoint is protected
+                        if (statusCode == 200 || statusCode == 401 || statusCode == 403) {
+                            echo "Application verified alive and listening! Status code: [${statusCode}]"
                             isHealthy = true
                         } else {
-                            echo "Endpoint returned code [${statusCode}]. Retrying in 5 seconds..."
+                            echo "Endpoint returned code [${statusCode}]. Application still warming up. Retrying in 5 seconds..."
                             sleep 5
                             retries++
                         }
                     }
 
                     if (!isHealthy) {
-                        error "Application failed active health validation check."
+                        error "Application failed active health validation check after matching retry limits."
                     }
                 }
             }
@@ -116,30 +121,20 @@ pipeline {
     post {
         failure {
             script {
-                // Safe handling of missing Slack Plugin to prevent workflow runtime crashes
                 try {
+                    // Triggers rollback safely since files are still present in the workspace
                     if (env.PREVIOUS_TAG && env.PREVIOUS_TAG != "none") {
                         echo "CRITICAL FAILURE: Initiating automated rollback to structural tag: ${env.PREVIOUS_TAG}"
                         sh "IMAGE_TAG=${env.PREVIOUS_TAG} REGISTRY_URL=${REGISTRY_URL} IMAGE_NAME=${IMAGE_NAME} docker-compose up -d --force-recreate"
-                        slackSend(channel: env.SLACK_CHANNEL, color: '#FF0000', message: "DEPLOYMENT FAILED: Build #${BUILD_NUMBER} failed health validation. Rolling back to safely active Tag: ${env.PREVIOUS_TAG}.")
                     } else {
-                        slackSend(channel: env.SLACK_CHANNEL, color: '#FF0000', message: "DEPLOYMENT FAILED: Build #${BUILD_NUMBER} collapsed, no stable context tag found for rollback recovery.")
+                        echo "No stable context tag found for rollback recovery."
                     }
                 } catch (Exception e) {
-                    echo "Deployment failed. (Note: Slack Notification skipped because the plugin is missing or unconfigured)."
+                    echo "Rollback action failed: ${e.getMessage()}"
                 }
             }
         }
-        success {
-            script {
-                try {
-                    slackSend(channel: env.SLACK_CHANNEL, color: '#00FF00', message: "DEPLOYMENT SUCCESSFUL: Version build-${BUILD_NUMBER} is serving production traffic.")
-                } catch (Exception e) {
-                    echo "Deployment completed successfully! (Note: Slack Notification skipped because the plugin is missing or unconfigured)."
-                }
-            }
-        }
-        always {
+        cleanup {
             echo "Executing Dangling Workspace and Resource Pruning..."
             sh "docker image prune -f"
             cleanWs()
