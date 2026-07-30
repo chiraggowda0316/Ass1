@@ -13,7 +13,7 @@ pipeline {
         SLACK_CHANNEL           = '#devops-alerts'
         
         // Readiness Variables 
-        HEALTH_ENDPOINT         = 'http://localhost:8080/actuator/health'
+        HEALTH_ENDPOINT         = 'http://localhost:8082/actuator/health'
         MAX_RETRIES             = '12' // 12 * 5 seconds = 1 minute total retry window
     }
 
