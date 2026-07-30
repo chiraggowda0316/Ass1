@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  java_app:
+    image: ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}
+    container_name: production_java_container
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
