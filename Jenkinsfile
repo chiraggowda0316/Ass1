@@ -2,11 +2,11 @@ pipeline {
     agent any
 
     environment {
-        // Repository & Private Registry Hooks
+        // Repository & Private Registry Hooks (Updated for your Docker Hub profile)
         GITHUB_CREDENTIALS_ID   = 'github-private-repo-token'
         REGISTRY_CREDENTIALS_ID = 'private-docker-registry-auth'
-        REGISTRY_URL            = 'your-private-registry.com'
-        IMAGE_NAME              = 'ass1-java-dev-app'
+        REGISTRY_URL            = 'docker.io'
+        IMAGE_NAME              = 'chiraggowda0316/ass1-java-dev-app'
         
         // Traceability Tags
         IMAGE_TAG               = "build-${BUILD_NUMBER}"
@@ -53,7 +53,7 @@ pipeline {
                                   -t ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG} \
                                   -t ${REGISTRY_URL}/${IMAGE_NAME}:latest .
                             """
-                            echo "Pushing traced images to the Private Registry..."
+                            echo "Pushing traced images to Docker Hub..."
                             sh "docker push ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}"
                             sh "docker push ${REGISTRY_URL}/${IMAGE_NAME}:latest"
                         }
@@ -105,18 +105,28 @@ pipeline {
     post {
         failure {
             script {
-                // If application fails to boot properly, instantly rollback to the older running tag
-                if (env.PREVIOUS_TAG && env.PREVIOUS_TAG != "none") {
-                    echo "CRITICAL FAILURE: Initiating automated rollback to structural tag: ${env.PREVIOUS_TAG}"
-                    sh "IMAGE_TAG=${env.PREVIOUS_TAG} REGISTRY_URL=${REGISTRY_URL} IMAGE_NAME=${IMAGE_NAME} docker-compose up -d --force-recreate"
-                    slackSend(channel: env.SLACK_CHANNEL, color: '#FF0000', message: "DEPLOYMENT FAILED: Build #${BUILD_NUMBER} failed health validation. Rolling back to safely active Tag: ${env.PREVIOUS_TAG}.")
-                } else {
-                    slackSend(channel: env.SLACK_CHANNEL, color: '#FF0000', message: "DEPLOYMENT FAILED: Build #${BUILD_NUMBER} collapsed, no stable context tag found for rollback recovery.")
+                // Safe handling of missing Slack Plugin to prevent workflow runtime crashes
+                try {
+                    if (env.PREVIOUS_TAG && env.PREVIOUS_TAG != "none") {
+                        echo "CRITICAL FAILURE: Initiating automated rollback to structural tag: ${env.PREVIOUS_TAG}"
+                        sh "IMAGE_TAG=${env.PREVIOUS_TAG} REGISTRY_URL=${REGISTRY_URL} IMAGE_NAME=${IMAGE_NAME} docker-compose up -d --force-recreate"
+                        slackSend(channel: env.SLACK_CHANNEL, color: '#FF0000', message: "DEPLOYMENT FAILED: Build #${BUILD_NUMBER} failed health validation. Rolling back to safely active Tag: ${env.PREVIOUS_TAG}.")
+                    } else {
+                        slackSend(channel: env.SLACK_CHANNEL, color: '#FF0000', message: "DEPLOYMENT FAILED: Build #${BUILD_NUMBER} collapsed, no stable context tag found for rollback recovery.")
+                    }
+                } catch (Exception e) {
+                    echo "Deployment failed. (Note: Slack Notification skipped because the plugin is missing or unconfigured)."
                 }
             }
         }
         success {
-            slackSend(channel: env.SLACK_CHANNEL, color: '#00FF00', message: "DEPLOYMENT SUCCESSFUL: Version build-${BUILD_NUMBER} is serving production traffic.")
+            script {
+                try {
+                    slackSend(channel: env.SLACK_CHANNEL, color: '#00FF00', message: "DEPLOYMENT SUCCESSFUL: Version build-${BUILD_NUMBER} is serving production traffic.")
+                } catch (Exception e) {
+                    echo "Deployment completed successfully! (Note: Slack Notification skipped because the plugin is missing or unconfigured)."
+                }
+            }
         }
         always {
             echo "Executing Dangling Workspace and Resource Pruning..."
@@ -125,4 +135,3 @@ pipeline {
         }
     }
 }
-
